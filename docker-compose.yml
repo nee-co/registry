@@ -1,0 +1,79 @@
+version: '2'
+
+services:
+  userdata:
+    image: mariadb:10
+    environment:
+      MYSQL_DATABASE: $DB_DATABASE
+      MYSQL_USER: $DB_USER
+      MYSQL_PASSWORD: $DB_PASSWORD
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+    volumes:
+      - userdata:/var/lib/mysql/
+
+  registry:
+    # issue: https://github.com/SUSE/Portus/issues/905
+    image: registry:2.3.1
+    ports:
+      - 5000:5000
+    environment:
+      REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY: /images/
+      REGISTRY_STORAGE_DELETE_ENABLED: 'true'
+      REGISTRY_AUTH_TOKEN_REALM: https://${FQDN_DOMAIN}:5080/v2/token
+      REGISTRY_AUTH_TOKEN_SERVICE: ${FQDN_DOMAIN}:5000
+      REGISTRY_AUTH_TOKEN_ISSUER: $FQDN_DOMAIN
+      REGISTRY_AUTH_TOKEN_ROOTCERTBUNDLE: /certs/server.crt
+      REGISTRY_HTTP_TLS_CERTIFICATE: /certs/server.crt
+      REGISTRY_HTTP_TLS_KEY: /certs/server.key
+      REGISTRY_HTTP_SECRET: $REGISTRY_HTTP_SECRET
+      REGISTRY_NOTIFICATIONS_ENDPOINTS: >
+        - name: frontend
+          url: https://${FQDN_DOMAIN}:5080/v2/webhooks/events
+          timeout: 500
+          threshold: 5
+          backoff: 1
+    volumes:
+      - /etc/letsencrypt/live/${FQDN_DOMAIN}/fullchain.pem:/certs/server.crt:ro
+      - /etc/letsencrypt/live/${FQDN_DOMAIN}/privkey.pem:/certs/server.key:ro
+      - images:/images/
+
+  frontend:
+    image: 5003/portus-git:${PORTUS_VERSION}
+    command: puma --bind ssl://0.0.0.0:3000?cert=/certs/server.crt&key=/certs/server.key --environment production --workers 3
+    ports:
+      - 5080:3000
+    depends_on:
+      - userdata
+      - registry
+    environment:
+      RAILS_ENV: production
+      # ref: https://github.com/SUSE/Portus/blob/984671662ade8c105f019b1ee108b71ef87a9821/app/views/errors/500.html.erb
+      PORTUS_SECRET_KEY_BASE: $PORTUS_SECRET_KEY_BASE
+      PORTUS_MACHINE_FQDN_VALUE: $FQDN_DOMAIN
+      PORTUS_KEY_PATH: /certs/server.key
+      PORTUS_PASSWORD: $PORTUS_PASSWORD
+      PORTUS_DELETE_ENABLED: 'true'
+      PORTUS_PRODUCTION_USERNAME: $DB_USER
+      PORTUS_PRODUCTION_PASSWORD: $DB_PASSWORD
+      PORTUS_PRODUCTION_DATABASE: $DB_DATABASE
+      PORTUS_PRODUCTION_HOST: userdata
+    volumes:
+      - /etc/letsencrypt/live/${FQDN_DOMAIN}/fullchain.pem:/certs/server.crt:ro
+      - /etc/letsencrypt/live/${FQDN_DOMAIN}/privkey.pem:/certs/server.key:ro
+
+  proxy:
+    build: ./nginx/
+    ports:
+      - 80:80
+      - 443:443
+    depends_on:
+      - frontend
+    volumes:
+      - /etc/letsencrypt/live/${FQDN_DOMAIN}/fullchain.pem:/certs/server.crt:ro
+      - /etc/letsencrypt/live/${FQDN_DOMAIN}/privkey.pem:/certs/server.key:ro
+
+volumes:
+  userdata:
+    driver: local
+  images:
+    driver: local
