@@ -3,6 +3,7 @@ version: '2'
 services:
   userdata:
     image: mariadb:10
+    mem_limit: 120m
     environment:
       MYSQL_DATABASE: $DB_DATABASE
       MYSQL_USER: $DB_USER
@@ -39,6 +40,7 @@ services:
 
   frontend:
     image: 5003/portus-git:${PORTUS_VERSION}
+    mem_limit: 250m
     command: puma --bind ssl://0.0.0.0:3000?cert=/certs/server.crt&key=/certs/server.key --environment production --workers 3
     ports:
       - 5080:3000
